@@ -12,13 +12,15 @@ mae-mri-basics/
 │   ├── dataset.py     # Data loading (synthetic slices for now)
 │   ├── model.py        # TinyMAE: patchify, masking, encoder, decoder
 │   ├── train.py         # Pretraining loop (unsupervised, no labels)
-│   └── visualize.py     # Inspect original / masked / reconstructed slices
+│   ├── visualize.py     # Inspect original / masked / reconstructed slices
+│   └── finetune.py      # THE key experiment: pretrained vs. from-scratch label efficiency
 ├── mae_pretrained.pth   # (created after running train.py)
 ├── mae_reconstructions.png  # (created after running visualize.py)
+├── label_efficiency.png # (created after running finetune.py)
 └── README.md
 ```
 
-Compared to your CNN repo, the shapes moving through the files are the
+Compared to my CNN repo, the shapes moving through the files are the
 main difference to get comfortable with:
 
 | CNN repo (`pytorch-cnn-basics`) | This repo (MAE) |
@@ -36,10 +38,21 @@ touch a label, the "task" is manufactured from the image itself
 
 ```bash
 cd mae-mri-basics
-pip install torch matplotlib numpy   # or use your existing CNN repo's venv
-python src/train.py        # pretrains TinyMAE on 2000 synthetic slices, ~a few minutes on CPU
+pip install torch matplotlib numpy 
+python src/train.py        # pretrains TinyMAE on 2000 synthetic slices
 python src/visualize.py    # produces mae_reconstructions.png
+python src/finetune.py     # produces label_efficiency.png,
 ```
+
+`finetune.py` is the payoff: it takes the encoder half of the pretrained
+model (discarding the decoder, which was only needed for reconstruction),
+attaches a small classification head predicting "does this slice have a
+lesion?", and compares it against an identical model with a randomly
+initialized (non-pretrained) encoder -- at five different label budgets
+(5% to 100% of a 1000-image labeled pool). The resulting plot should show
+the pretrained version winning by the largest margin at the smallest label
+budgets, which is the actual reason foundation-model pretraining matters:
+it makes scarce labeled data go further.
 
 You should see the reconstruction loss drop over epochs in `train.py`'s
 output, and `mae_reconstructions.png` should show blurry-but-recognizable
