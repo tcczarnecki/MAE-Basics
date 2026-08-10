@@ -38,7 +38,7 @@ def _make_synthetic_slice(img_size: int, rng: np.random.Generator):
     img[brain_mask] += texture[brain_mask]
 
     # Random "lesion" blob (brighter or darker patch) inside the brain, most of the time
-    label = 1 if rng.random() < 0.7 else 0
+    label = 1 if rng.random() < 0.5 else 0
     if label == 1:
         lesion_r = rng.uniform(img_size * 0.05, img_size * 0.12)
         # keep the lesion center inside the brain ellipse

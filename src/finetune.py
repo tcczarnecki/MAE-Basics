@@ -68,8 +68,14 @@ class MAEEncoderClassifier(nn.Module):
         patches = patchify(imgs, self.patch_size)
         x = self.patch_embed(patches) + self.pos_embed  # (B, N, D), NO masking -- full image visible
         x = self.encoder(x)
-        pooled = x.mean(dim=1)  # global average pool over all patch tokens
-        return self.head(pooled).squeeze(-1)  # (B,) raw logits
+        patch_logits = self.head(x).squeeze(-1)  # (B, N) -- one lesion-likelihood score per patch
+        # Max-pooling (not mean!) across patches: a lesion only occupies a few of the
+        # 64 patches, so averaging would dilute that signal into near-nothing. Taking
+        # the max instead asks "is there ANY patch that looks lesion-like?" -- this is
+        # the standard multiple-instance-learning (MIL) approach used for localized
+        # abnormality detection when only an image-level label is available.
+        logits, _ = patch_logits.max(dim=1)  # (B,)
+        return logits
 
 
 def build_model(pretrained: bool) -> MAEEncoderClassifier:
@@ -106,13 +112,14 @@ def train_one(model, loader, epochs, device):
 @torch.no_grad()
 def evaluate(model, loader, device):
     model.eval()
-    correct, total = 0, 0
+    correct, total, positive_preds = 0, 0, 0
     for imgs, labels in loader:
         imgs, labels = imgs.to(device), labels.to(device)
         preds = (torch.sigmoid(model(imgs)) > 0.5).float()
         correct += (preds == labels).sum().item()
+        positive_preds += preds.sum().item()
         total += labels.size(0)
-    return correct / total
+    return correct / total, positive_preds / total
 
 
 def main():
@@ -141,9 +148,9 @@ def main():
         for mode in ["pretrained", "scratch"]:
             model = build_model(pretrained=(mode == "pretrained"))
             model = train_one(model, loader, FT_EPOCHS, device)
-            acc = evaluate(model, val_loader, device)
+            acc, pos_rate = evaluate(model, val_loader, device)
             results[mode].append(acc)
-            print(f"label_fraction={frac:>4.2f} (n={n:>4d}) | {mode:>10s} | val accuracy = {acc:.3f}")
+            print(f"label_fraction={frac:>4.2f} (n={n:>4d}) | {mode:>10s} | val accuracy = {acc:.3f} | predicted-positive rate = {pos_rate:.2f}")
 
     # Plot the label-efficiency curve
     plt.figure(figsize=(6, 4))
