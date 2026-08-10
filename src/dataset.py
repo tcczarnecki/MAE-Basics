@@ -16,8 +16,13 @@ import torch
 from torch.utils.data import Dataset
 
 
-def _make_synthetic_slice(img_size: int, rng: np.random.Generator) -> np.ndarray:
-    """Procedurally generate one fake 'brain slice' as a (img_size, img_size) float32 array in [0, 1]."""
+def _make_synthetic_slice(img_size: int, rng: np.random.Generator):
+    """Procedurally generate one fake 'brain slice'.
+
+    Returns (img, label): img is a (img_size, img_size) float32 array in
+    [0, 1]; label is 1 if a lesion blob was placed, else 0. train.py never
+    looks at label -- it's only used by finetune.py's classification task.
+    """
     yy, xx = np.mgrid[0:img_size, 0:img_size]
     cy, cx = img_size / 2, img_size / 2
 
@@ -33,7 +38,8 @@ def _make_synthetic_slice(img_size: int, rng: np.random.Generator) -> np.ndarray
     img[brain_mask] += texture[brain_mask]
 
     # Random "lesion" blob (brighter or darker patch) inside the brain, most of the time
-    if rng.random() < 0.7:
+    label = 1 if rng.random() < 0.7 else 0
+    if label == 1:
         lesion_r = rng.uniform(img_size * 0.05, img_size * 0.12)
         # keep the lesion center inside the brain ellipse
         while True:
@@ -47,20 +53,28 @@ def _make_synthetic_slice(img_size: int, rng: np.random.Generator) -> np.ndarray
         img[lesion_mask & brain_mask] += delta
 
     img += rng.normal(0, 0.02, size=img.shape).astype(np.float32)  # sensor-ish noise
-    return np.clip(img, 0.0, 1.0)
+    return np.clip(img, 0.0, 1.0), label
 
 
 class SyntheticMRIDataset(Dataset):
-    """A fixed-size dataset of procedurally generated slices, seeded for reproducibility."""
+    """A fixed-size dataset of procedurally generated slices, seeded for reproducibility.
 
-    def __init__(self, num_samples: int = 2000, img_size: int = 64, seed: int = 0):
+    return_labels=False (default): __getitem__ returns just the image tensor
+      -- used by train.py, which does unsupervised MAE pretraining and must
+      never look at labels.
+    return_labels=True: __getitem__ returns (image_tensor, label_tensor)
+      -- used by finetune.py's lesion-present/absent classification task.
+    """
+
+    def __init__(self, num_samples: int = 2000, img_size: int = 64, seed: int = 0, return_labels: bool = False):
         self.num_samples = num_samples
         self.img_size = img_size
+        self.return_labels = return_labels
         self._rng = np.random.default_rng(seed)
         # Pre-generate everything up front — dataset is small, keeps __getitem__ simple/fast
-        self._images = [
-            _make_synthetic_slice(img_size, self._rng) for _ in range(num_samples)
-        ]
+        pairs = [_make_synthetic_slice(img_size, self._rng) for _ in range(num_samples)]
+        self._images = [p[0] for p in pairs]
+        self._labels = [p[1] for p in pairs]
 
     def __len__(self):
         return self.num_samples
@@ -69,4 +83,7 @@ class SyntheticMRIDataset(Dataset):
         img = self._images[idx]
         # (H, W) -> (1, H, W) : one channel, like a single-sequence MRI slice
         tensor = torch.from_numpy(img).unsqueeze(0)
+        if self.return_labels:
+            label = torch.tensor(self._labels[idx], dtype=torch.float32)
+            return tensor, label
         return tensor
